@@ -1,0 +1,17 @@
+poetry-platform/
+├── server/
+│   ├── models/
+│   │   ├── User.js
+│   │   └── Poem.js
+│   ├── routes/
+│   │   ├── auth.js
+│   │   ├── poems.js
+│   │   └── users.js
+│   ├── middleware/
+│   │   └── auth.js
+│   ├── config/
+│   │   └── database.js
+│   └── server.js
+├── client/
+│   └── index.html
+└── package.json
