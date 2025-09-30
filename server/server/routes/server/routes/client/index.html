@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AnOpenVerseForEveryone | Онлайн платформа</title>
+    <style>
+        /* Все стили из предыдущей версии остаются */
+        /* Добавляем индикатор загрузки */
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .online-indicator {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            background: #27ae60;
+            color: white;
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 12px;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <div class="online-indicator">🟢 Онлайн</div>
+    
+    <!-- Остальная разметка из предыдущей версии -->
+    <!-- Меняем только навигацию - убираем синхронизацию -->
+    <header class="site-header">
+        <div class="header-container">
+            <div class="site-logo">
+                <div class="logo-icon">📚</div>
+                <div class="logo-text">
+                    <div class="site-title">AnOpenVerseForEveryone</div>
+                    <div class="site-subtitle">Онлайн платформа</div>
+                </div>
+            </div>
+            
+            <nav class="main-nav">
+                <button class="nav-btn active" onclick="Navigation.showHome()">
+                    🏠 Главная
+                </button>
+                <button class="nav-btn" onclick="Navigation.showAllPoems()">
+                    📚 Все стихи
+                </button>
+                <button class="nav-btn" onclick="Navigation.showAllAuthors()">
+                    👥 Авторы
+                </button>
+                <button class="nav-btn" onclick="Navigation.showMyPoems()" id="myPoemsBtn" style="display: none;">
+                    📖 Мои стихи
+                </button>
+                <button class="nav-btn" onclick="Navigation.showAddPoem()" id="addPoemBtn" style="display: none;">
+                    ✏️ Добавить стих
+                </button>
+                
+                <div class="user-menu">
+                    <button class="nav-btn" onclick="Navigation.showLogin()" id="loginBtn">
+                        🔑 Войти
+                    </button>
+                    <div class="user-avatar" id="userAvatar" style="display: none;" onclick="UserMenu.toggle()">
+                        U
+                        <div class="user-rating" id="userRating">0</div>
+                    </div>
+                </div>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Основной контент (остается таким же) -->
+    <div class="main-container">
+        <!-- Все секции остаются -->
+    </div>
+
+    <script>
+        // Базовый URL API
+        const API_URL = window.location.hostname === 'localhost' 
+            ? 'http://localhost:5000/api' 
+            : '/api';
+
+        // ==================== КЛАСС ДЛЯ РАБОТЫ С API ====================
+        class ApiService {
+            static async request(endpoint, options = {}) {
+                const token = localStorage.getItem('token');
+                const config = {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(token && { 'Authorization': `Bearer ${token}` }),
+                        ...options.headers
+                    },
+                    ...options
+                };
+
+                try {
+                    const response = await fetch(`${API_URL}${endpoint}`, config);
+                    const data = await response.json();
+
+                    if (!response.ok) {
+                        throw new Error(data.message || 'Ошибка сервера');
+                    }
+
+                    return data;
+                } catch (error) {
+                    console.error('API Error:', error);
+                    throw error;
+                }
+            }
+
+            // Auth methods
+            static async register(userData) {
+                return this.request('/auth/register', {
+                    method: 'POST',
+                    body: JSON.stringify(userData)
+                });
+            }
+
+            static async login(credentials) {
+                return this.request('/auth/login', {
+                    method: 'POST',
+                    body: JSON.stringify(credentials)
+                });
+            }
+
+            static async getCurrentUser() {
+                return this.request('/auth/me');
+            }
+
+            // Poems methods
+            static async getPoems() {
+                return this.request('/poems');
+            }
+
+            static async getPoem(id) {
+                return this.request(`/poems/${id}`);
+            }
+
+            static async createPoem(poemData) {
+                return this.request('/poems', {
+                    method: 'POST',
+                    body: JSON.stringify(poemData)
+                });
+            }
+
+            static async updatePoem(id, poemData) {
+                return this.request(`/poems/${id}`, {
+                    method: 'PUT',
+                    body: JSON.stringify(poemData)
+                });
+            }
+
+            static async deletePoem(id) {
+                return this.request(`/poems/${id}`, {
+                    method: 'DELETE'
+                });
+            }
+
+            static async markAsRead(id) {
+                return this.request(`/poems/${id}/read`, {
+                    method: 'POST'
+                });
+            }
+
+            static async getUserPoems(userId) {
+                return this.request(`/poems/user/${userId}`);
+            }
+
+            // Users methods
+            static async getUsers() {
+                return this.request('/users');
+            }
+
+            static async getUser(id) {
+                return this.request(`/users/${id}`);
+            }
+
+            static async getTopAuthors(limit = 5) {
+                return this.request(`/users/top/authors?limit=${limit}`);
+            }
+        }
+
+        // ==================== ОСНОВНОЙ КЛАСС ПЛАТФОРМЫ (ОБНОВЛЕННЫЙ) ====================
+        class PoetryPlatform {
+            static async init() {
+                this.users = [];
+                this.poems = [];
+                this.currentUser = null;
+                this.editingPoemId = null;
+                
+                this.setupEventListeners();
+                Modal.setupCloseHandlers();
+                
+                try {
+                    // Пытаемся авторизоваться по токену
+                    const token = localStorage.getItem('token');
+                    if (token) {
+                        const response = await ApiService.getCurrentUser();
+                        this.currentUser = response.user;
+                    }
+                } catch (error) {
+                    localStorage.removeItem('token');
+                }
+                
+                UserMenu.updateUI();
+                await Navigation.showHome();
+            }
+
+            static async loadAllData() {
+                try {
+                    const [poemsResponse, usersResponse] = await Promise.all([
+                        ApiService.getPoems(),
+                        ApiService.getUsers()
+                    ]);
+                    
+                    this.poems = poemsResponse;
+                    this.users = usersResponse;
+                } catch (error) {
+                    Notifications.show('Ошибка загрузки данных', 'error');
+                }
+            }
+
+            // Обновленные методы для работы с API
+            static async handleRegistration() {
+                const name = document.getElementById('registerName').value;
+                const email = document.getElementById('registerEmail').value;
+                const password = document.getElementById('registerPassword').value;
+                const birthdate = document.getElementById('registerBirthdate').value;
+                const bio = document.getElementById('registerBio').value;
+
+                try {
+                    const response = await ApiService.register({
+                        name, email, password, birthdate, bio
+                    });
+
+                    localStorage.setItem('token', response.token);
+                    this.currentUser = response.user;
+                    UserMenu.updateUI();
+                    Notifications.show('Регистрация успешна!');
+                    Navigation.showHome();
+                } catch (error) {
+                    Notifications.show(error.message, 'error');
+                }
+            }
+
+            static async handleLogin() {
+                const email = document.getElementById('loginEmail').value;
+                const password = document.getElementById('loginPassword').value;
+
+                try {
+                    const response = await ApiService.login({ email, password });
+                    
+                    localStorage.setItem('token', response.token);
+                    this.currentUser = response.user;
+                    UserMenu.updateUI();
+                    Notifications.show(`Добро пожаловать, ${this.currentUser.name}!`);
+                    Navigation.showHome();
+                } catch (error) {
+                    Notifications.show(error.message, 'error');
+                }
+            }
+
+            static async handleAddPoem() {
+                if (!this.currentUser) {
+                    Notifications.show('Для добавления стихов нужно войти в аккаунт', 'error');
+                    return;
+                }
+
+                const title = document.getElementById('poemTitle').value;
+                const content = document.getElementById('poemContent').value;
+                const editPoemId = document.getElementById('editPoemId').value;
+
+                try {
+                    if (editPoemId) {
+                        await ApiService.updatePoem(editPoemId, { title, content });
+                        Notifications.show('Стихотворение обновлено!');
+                    } else {
+                        await ApiService.createPoem({ title, content });
+                        Notifications.show('Стихотворение опубликовано!');
+                    }
+
+                    this.resetAddPoemForm();
+                    await this.loadAllData();
+                    Navigation.showMyPoems();
+                } catch (error) {
+                    Notifications.show(error.message, 'error');
+                }
+            }
+
+            static async deletePoem(poemId) {
+                if (!confirm('Вы уверены, что хотите удалить это стихотворение?')) {
+                    return;
+                }
+
+                try {
+                    await ApiService.deletePoem(poemId);
+                    await this.loadAllData();
+                    this.renderMyPoems();
+                    Notifications.show('Стихотворение удалено');
+                } catch (error) {
+                    Notifications.show(error.message, 'error');
+                }
+            }
+
+            static async markAsRead(poemId) {
+                try {
+                    await ApiService.markAsRead(poemId);
+                    await this.loadAllData();
+                    Notifications.show('+1 к популярности автора!');
+                } catch (error) {
+                    // Игнорируем ошибку "Уже прочитано"
+                    if (!error.message.includes('Уже прочитано')) {
+                        Notifications.show(error.message, 'error');
+                    }
+                }
+            }
+
+            // Обновленные методы рендеринга
+            static async renderHomeContent() {
+                await this.loadAllData();
+                await this.renderTopAuthors();
+                this.renderRecentPoems();
+                this.renderFeaturedAuthors();
+            }
+
+            static async renderTopAuthors() {
+                try {
+                    const topAuthors = await ApiService.getTopAuthors(3);
+                    const container = document.getElementById('topAuthors');
+                    
+                    if (topAuthors.length === 0) {
+                        container.innerHTML = '<p style="text-align: center; grid-column: 1/-1; color: #7f8c8d;">Рейтинг авторов пока пуст</p>';
+                        return;
+                    }
+
+                    const medals = ['🥇', '🥈', '🥉'];
+                    container.innerHTML = topAuthors.map((author, index) => {
+                        const medal = medals[index] || '🏅';
+                        const cardClass = index === 0 ? 'gold' : index === 1 ? 'silver' : 'bronze';
+                        
+                        return `
+                            <div class="top-author-card ${cardClass}">
+                                <div class="medal">${medal}</div>
+                                <div class="author-avatar-small" style="background: ${author.avatarColor}; width: 60px; height: 60px; margin: 0 auto 10px;">
+                                    ${author.name.split(' ').map(n => n[0]).join('')}
+                                </div>
+                                <h3 style="color: var(--primary-color); margin-bottom: 10px;">${this.escapeHtml(author.name)}</h3>
+                                <div class="rating-badge" style="margin: 0 auto;">
+                                    👥 ${author.popularity} читателей
+                                </div>
+                                <div style="margin-top: 10px; color: #7f8c8d; font-size: 0.9em;">
+                                    ${author.poemsCount} стихов
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+                } catch (error) {
+                    console.error('Error loading top authors:', error);
+                }
+            }
+
+            // Остальные методы рендеринга адаптировать аналогично...
+
+            static async showPoem(poemId) {
+                try {
+                    const poem = await ApiService.getPoem(poemId);
+                    const author = this.users.find(u => u._id === poem.author._id) || poem.author;
+
+                    // Отмечаем как прочитанное
+                    await this.markAsRead(poemId);
+
+                    // Показываем модальное окно
+                    const initials = author.name.split(' ').map(n => n[0]).join('');
+
+                    document.getElementById('modalTitle').textContent = poem.title;
+                    document.getElementById('modalAuthor').innerHTML = `
+                        <div class="author-avatar-small" style="background: ${author.avatarColor}">
+                            ${initials}
+                        </div>
+                        ${poem.authorName}
+                        ${author.popularity > 0 ? `
+                            <span class="rating-badge">
+                                👥 ${author.popularity}
+                            </span>
+                        ` : ''}
+                    `;
+                    document.getElementById('modalContent').textContent = poem.content;
+                    
+                    document.getElementById('poemPopularity').innerHTML = `
+                        <div style="text-align: center;">
+                            <div style="font-size: 1.2em; font-weight: bold; color: var(--primary-color); margin-bottom: 10px;">
+                                📊 Статистика
+                            </div>
+                            <div style="display: flex; justify-content: center; gap: 30px;">
+                                <div>
+                                    <div style="font-size: 1.5em; font-weight: bold; color: var(--secondary-color);">
+                                        ${poem.readers || 0}
+                                    </div>
+                                    <div style="font-size: 0.9em; color: #7f8c8d;">читателей</div>
+                                </div>
+                                <div>
+                                    <div style="font-size: 1.5em; font-weight: bold; color: var(--gold-color);">
+                                        ${author.popularity || 0}
+                                    </div>
+                                    <div style="font-size: 0.9em; color: #7f8c8d;">популярность автора</div>
+                                </div>
+                            </div>
+                            ${this.currentUser && poem.uniqueReaders.includes(this.currentUser._id) ? 
+                                '<div style="margin-top: 10px; color: var(--success-color);">✅ Вы увеличили популярность автора!</div>' : 
+                                '<div style="margin-top: 10px; color: var(--secondary-color);">👆 Прочитайте стих, чтобы +1 к популярности автора</div>'
+                            }
+                        </div>
+                    `;
+                    
+                    document.getElementById('modalDate').textContent = `Опубликовано: ${new Date(poem.createdAt).toLocaleDateString('ru-RU')}`;
+                    Modal.open();
+
+                    // Обновляем отображение
+                    await this.renderHomeContent();
+                } catch (error) {
+                    Notifications.show(error.message, 'error');
+                }
+            }
+
+            // Остальные методы класса остаются аналогичными, но с async/await
+        }
+
+        // Классы Navigation, Modal, UserMenu, Notifications остаются без изменений
+        // (только убираем раздел синхронизации из Navigation)
+
+        // Инициализация при загрузке
+        document.addEventListener('DOMContentLoaded', () => {
+            PoetryPlatform.init();
+        });
+    </script>
+</body>
+</html>
